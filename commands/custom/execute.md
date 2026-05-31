@@ -1,0 +1,1 @@
+Read and follow ~/.claude/agents/executor.md for this task. Apply TDD discipline. After each task's verification step, spawn `/custom:review` on that task's deliverable BEFORE committing. Follow the plan exactly — report deviations.

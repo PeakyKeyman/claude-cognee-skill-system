@@ -1,0 +1,1 @@
+Read and follow ~/.claude/skills/prompt-engineering/SKILL.md for this task. Apply the 6-section prompt anatomy with explicit implications. Use the 10-item audit checklist. Enforce advanced techniques.

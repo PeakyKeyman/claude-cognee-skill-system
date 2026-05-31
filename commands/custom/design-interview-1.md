@@ -1,0 +1,1 @@
+Read and follow ~/.claude/skills/design-first-interview/SKILL.md for this task. Pre-research interview: surface what operator knows, what's locked vs flexible, what to research. Multi-question OK. Codebase-first override. Depth-tree walking. No hard turn ceiling — natural lock. Recommended-answer technique is free-flowing prose, not binary confirm/reject. DO NOT propose a design.

@@ -1,0 +1,1 @@
+Read and follow ~/.claude/agents/peer-reviewer.md for this task. Rigor-focused review of a design memo or technical spec: verify citations against cited sources, check methodology specification, surface unstated assumptions, evaluate alternative-consideration completeness. Complement to /custom:devils-advocate (DA finds weaknesses; peer-review verifies rigor).

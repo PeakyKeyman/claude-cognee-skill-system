@@ -1,0 +1,1 @@
+Read and follow ~/.claude/skills/design-memo-draft/SKILL.md, then ~/.claude/skills/design-revision-loop/SKILL.md for this task. Full memo arc: draft → DA → peer-review → revise → loop until convergence (cap 3 rounds). Implementation estimates must be honest, not aspirational. Don't preserve placeholders. Every decision locked with reason and rejected alternatives.

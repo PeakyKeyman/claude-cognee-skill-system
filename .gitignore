@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+._*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Personal config — never commit
+settings.json
+*.env
+.env.local
+*-secret
+*-credentials*
+
+# Cognee data (if user mistakenly clones the data dir in)
+cognee-data/
+cognee-mcp/.env
+cognee-mcp/.venv/
+
+# Per-project state — never publish
+projects/
+todos/
+archive/
+memory/
+
+# Cached / temporary
+*.lock
+*.log
+.codegraph/
+.eval-data/
+
+# Backups
+*.bak
+*.backup
+backup-*/

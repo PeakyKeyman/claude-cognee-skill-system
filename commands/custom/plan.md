@@ -1,0 +1,1 @@
+Read and follow ~/.claude/agents/planner.md for this task. Apply the plan flow: Goal-Backward Planning → Task Design → Adversarial Review (DA, granular, per-task) → Reason over DA recommendations (adopt / hybrid / reject with reasoning) → Common Ground (surface residual assumptions to user) → Save.

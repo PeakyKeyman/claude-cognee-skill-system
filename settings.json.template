@@ -1,0 +1,99 @@
+{
+  "_comment": "Copy to ~/.claude/settings.json and fill in your specifics. Do NOT commit your filled-in settings.json — it's in .gitignore.",
+
+  "model": "claude-opus-4-7",
+
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [],
+    "additionalDirectories": [
+      "/path/to/your/workspace",
+      "$HOME/.claude"
+    ]
+  },
+
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/hooks/session-init.js\"" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "node \"$HOME/.claude/hooks/safety-guard.js\"" },
+        { "type": "command", "command": "node \"$HOME/.claude/hooks/commit-guard.js\"" }
+      ]},
+      { "matcher": "Edit|Write", "hooks": [
+        { "type": "command", "command": "node \"$HOME/.claude/hooks/file-size-guard.js\"" }
+      ]},
+      { "matcher": "Read", "hooks": [
+        { "type": "command", "command": "node \"$HOME/.claude/hooks/read-guard.js\"" }
+      ]}
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [
+        { "type": "command", "command": "node \"$HOME/.claude/hooks/context-monitor.js\"" }
+      ]},
+      { "matcher": "Edit|Write", "hooks": [
+        { "type": "command", "command": "node \"$HOME/.claude/hooks/auto-format.js\"" },
+        { "type": "command", "command": "node \"$HOME/.claude/hooks/test-reminder.js\"" }
+      ]}
+    ],
+    "PreCompact": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/hooks/pre-compact-saver.js\"" }] }
+    ],
+    "Stop": [
+      { "matcher": "*", "hooks": [
+        { "type": "command", "command": "$HOME/.claude/hooks/notify.sh" },
+        { "type": "command", "command": "node \"$HOME/.claude/hooks/stop-session.js\"" }
+      ]}
+    ]
+  },
+
+  "statusLine": {
+    "type": "command",
+    "command": "node \"$HOME/.claude/hooks/statusline.js\""
+  },
+
+  "mcpServers": {
+    "_comment": "Add your MCP servers here. Examples below — uncomment and configure as needed.",
+
+    "_codegraph_example": {
+      "command": "npx",
+      "args": ["@colbymchenry/codegraph", "mcp"]
+    },
+
+    "_cognee_example": {
+      "command": "uv",
+      "args": ["--directory", "$HOME/.claude/cognee-mcp/cognee-mcp", "run", "cognee-mcp"],
+      "env": {
+        "LLM_PROVIDER": "ollama",
+        "LLM_MODEL": "qwen2.5:32b-16k",
+        "LLM_ENDPOINT": "http://localhost:11434/v1",
+        "EMBEDDING_PROVIDER": "ollama",
+        "EMBEDDING_MODEL": "nomic-embed-text:latest",
+        "EMBEDDING_ENDPOINT": "http://localhost:11434/api/embed",
+        "GRAPH_DATABASE_PROVIDER": "neo4j",
+        "GRAPH_DATABASE_URL": "bolt://localhost:7687",
+        "GRAPH_DATABASE_USERNAME": "neo4j",
+        "GRAPH_DATABASE_PASSWORD": "REPLACE_ME",
+        "DB_PROVIDER": "postgres",
+        "DB_HOST": "127.0.0.1",
+        "DB_PORT": "5433",
+        "DB_NAME": "cognee_db",
+        "DB_USERNAME": "cognee",
+        "DB_PASSWORD": "REPLACE_ME"
+      }
+    }
+  },
+
+  "plugins": {
+    "_comment": "Add Claude Code plugins here as needed"
+  }
+}

@@ -1,0 +1,354 @@
+"""
+Nua Labs custom graph ontology for Cognee.
+
+Defines the entity types and relationships extracted from durable registries
+(KNOWN_ISSUES.md, TODO_SESSIONS.md, session memos, ~/.claude/rules/) and
+saved interactions.
+
+Pass to cognify via the MCP server:
+
+    mcp__cognee__cognify(
+        data=<file_path_or_text>,
+        graph_model_file="~/.claude/cognee-custom/nua_ontology.py",
+        graph_model_name="NuaContext"
+    )
+
+Or pick a narrower root for single-type extraction:
+
+    graph_model_name="KnownIssue"      # for KI-focused docs
+    graph_model_name="Lesson"          # for rules / feedback files
+    graph_model_name="Session"         # for session-close memos
+
+Cognee integration (refactored 2026-05-31):
+- ALL entity types inherit from cognee.modules.engine.models.Entity, which
+  itself extends DataPoint extends BaseModel. This is REQUIRED for the
+  LLM-extracted instance to fit DocumentChunk.contains, typed
+  `List[Union[Entity, Event, tuple[Edge, Entity]]]` in Cognee 0.5.4. Without
+  Entity inheritance, add_data_points fails with 21 validation errors against
+  the chunk's contains field. Diagnosed against extract_graph_from_data.py
+  line 104-108 — when graph_model is not KnowledgeGraph, Cognee assigns
+  chunk_graphs[i] directly to data_chunks[i].contains, which triggers
+  Pydantic re-validation.
+- Each entity provides its own `name` (required str) and `description`
+  (required str). These are Cognee Entity's two required fields. The natural
+  mapping per class is documented in the class docstring.
+- Each entity has `metadata = {"index_fields": [...]}` declaring vector-indexed
+  fields. Index the fields you'll actually search by.
+- Field names become Neo4j relationship labels (e.g., `resolved_by: Optional[Commit]`
+  creates a RESOLVED_BY edge from KnownIssue to Commit).
+- Optional fields are forgiving — the extractor may leave them None when the
+  source text doesn't supply the information.
+- The Neo4j node label is the class name (set by DataPoint.__init__ via
+  `self.type = self.__class__.__name__`). So a Lesson instance writes a
+  `:Lesson` node, a KnownIssue writes `:KnownIssue`, etc.
+
+Design notes (codified 2026-05-26, ontology rebase 2026-05-31):
+- Middle-ground between conservative (5 types) and maximalist (12 types).
+- 8 entity types + a multi-type wrapper, ~10 typed relationships.
+- :Branch, :Project, :Feature, :Flag deliberately omitted — promote to first-class
+  when query patterns demand them, not before.
+- :Artifact is the typed catch-all for things referenced but not primary subjects
+  of search (branches, planning docs, env config, files of note).
+- NuaContext is the multi-type wrapper for mixed-content docs (session memos,
+  KNOWN_ISSUES.md). For single-type docs, pass the entity class directly as root.
+"""
+
+from datetime import date
+from typing import List, Literal, Optional
+
+from pydantic import Field
+
+# Cognee's Entity base class. Entity extends DataPoint extends BaseModel.
+from cognee.modules.engine.models import Entity
+
+
+# ============================================================================
+# Entity types
+# ----------------------------------------------------------------------------
+# Order matters: types referenced by other types are declared first so that
+# Pydantic forward references resolve without needing string annotations.
+# Self-references and forward references use string annotations and are
+# resolved via model_rebuild() at the bottom of this file.
+# ============================================================================
+
+
+class Artifact(Entity):
+    """Typed catch-all for referenceable items that don't warrant their own type.
+
+    Use this for branches, planning docs, env config files, paths of note,
+    or any referenced thing that's not the primary subject of a search. Promote
+    to a first-class entity type only when query patterns demand it.
+
+    Field mapping (Entity → Artifact concept):
+    - `name` (Entity-required) ← the artifact identifier (branch name, file path, etc.)
+    - `description` (Entity-required) ← free-text context / notes about the artifact
+    - `kind` (our extra) ← the artifact category, when classifiable
+    """
+
+    name: str = Field(
+        ..., description="Identifier for the artifact (branch name, file path, etc.)"
+    )
+    description: str = Field(
+        ...,
+        description="Free-text context about what this artifact is and why it matters",
+    )
+    kind: Optional[
+        Literal["branch", "planning_doc", "config", "file", "worktree", "other"]
+    ] = Field(None, description="What category of artifact this is")
+
+    metadata: dict = {"index_fields": ["name", "description"]}
+
+
+class Commit(Entity):
+    """A git commit. Bridge node to CodeGraph.
+
+    `codegraph_node_ids` is the bridge field: when extracting a commit from text
+    that mentions specific files or functions (e.g., 'touches lab_schema_builder.py:2086'),
+    capture those identifiers here. Application-level code can then hydrate the
+    commit context by calling mcp__codegraph__codegraph_node on each ID.
+
+    Field mapping (Entity → Commit concept):
+    - `name` (Entity-required) ← the commit SHA (short or full), primary key
+    - `description` (Entity-required) ← commit message subject line
+    """
+
+    name: str = Field(..., description="Commit SHA (short or full), primary key")
+    description: str = Field(
+        ..., description="Commit message subject line; the human-readable what-and-why"
+    )
+    branch: Optional[str] = Field(None, description="Branch the commit landed on")
+    landed_at: Optional[date] = Field(
+        None, description="Date the commit was authored/landed"
+    )
+    codegraph_node_ids: List[str] = Field(
+        default_factory=list,
+        description="CodeGraph node IDs this commit touches (file paths, symbol IDs, etc.)",
+    )
+
+    metadata: dict = {"index_fields": ["name", "description", "branch"]}
+
+
+class Session(Entity):
+    """A unit of work bounded by a session boundary.
+
+    Typically corresponds to one calendar day OR a named arc (e.g., a multi-day
+    track-completion push). Primary unit of cross-session continuity. Provides
+    provenance for decisions and commits.
+
+    Field mapping (Entity → Session concept):
+    - `name` (Entity-required) ← session identifier, e.g. '2026-05-25-v-final-wave-3'
+    - `description` (Entity-required) ← 1-2 sentence summary of what was accomplished
+    """
+
+    name: str = Field(
+        ..., description="Session identifier, e.g. '2026-05-25-v-final-wave-3'"
+    )
+    description: str = Field(
+        ..., description="What this session accomplished, 1-2 sentences"
+    )
+    branch: Optional[str] = Field(
+        None, description="Git branch active during the session"
+    )
+    worktree: Optional[str] = Field(
+        None, description="Worktree path if not main checkout"
+    )
+    commits_landed: List[Commit] = Field(
+        default_factory=list, description="Commits produced during this session"
+    )
+
+    metadata: dict = {"index_fields": ["name", "description", "branch"]}
+
+
+class Track(Entity):
+    """A multi-session work unit.
+
+    Examples: 'Track A Phase 1', 'V-final Phase 1', 'text_v1 Batch 1'. The
+    'epic' layer between commits/sessions and project-level goals. Review
+    necessity quarterly — this vocabulary evolves with workflow.
+
+    Field mapping (Entity → Track concept):
+    - `name` (Entity-required) ← track identifier, e.g. 'Track A Phase 1'
+    - `description` (Entity-required) ← what this track is meant to accomplish
+    """
+
+    name: str = Field(..., description="Track identifier, e.g. 'Track A Phase 1'")
+    description: str = Field(
+        ..., description="Goal of this track — what it accomplishes when complete"
+    )
+    phase: Optional[str] = Field(None, description="Phase number / name")
+    wave: Optional[str] = Field(None, description="Wave designator within the phase")
+    status: Optional[
+        Literal["planned", "in-progress", "shipped", "abandoned", "deferred"]
+    ] = Field(None, description="Current track status")
+    shipped_at: Optional[date] = Field(None, description="Date the track was completed")
+
+    metadata: dict = {
+        "index_fields": ["name", "description", "phase", "wave", "status"]
+    }
+
+
+class Lesson(Entity):
+    """A codified rule or feedback finding. Cross-project transferable knowledge.
+
+    Distinguishes from Decision in that lessons are *generalizable patterns*,
+    not single-context choices. Most lessons live in ~/.claude/rules/ or
+    ~/.claude/projects/<project>/memory/feedback_*.md.
+
+    Field mapping (Entity → Lesson concept):
+    - `name` (Entity-required) ← short title of the lesson / rule
+    - `description` (Entity-required) ← trigger condition under which this lesson fires
+    """
+
+    name: str = Field(..., description="Short name of the lesson / rule")
+    description: str = Field(
+        ..., description="The trigger condition under which this lesson fires"
+    )
+    file_path: Optional[str] = Field(
+        None, description="Path to the .md file where this lesson is codified"
+    )
+
+    metadata: dict = {"index_fields": ["name", "description"]}
+
+
+class Decision(Entity):
+    """An explicit decision with rationale.
+
+    `made_by` captures whether the operator decided, Claude decided, or both
+    agreed jointly. Decisions that override earlier decisions populate
+    `supersedes`.
+
+    Field mapping (Entity → Decision concept):
+    - `name` (Entity-required) ← short title of the decision
+    - `description` (Entity-required) ← why this decision was made (rationale)
+    """
+
+    name: str = Field(..., description="Short name of the decision")
+    description: str = Field(..., description="Why this decision was made (rationale)")
+    made_by: Optional[Literal["operator", "claude", "joint"]] = Field(
+        None, description="Who made the call"
+    )
+    made_in: Optional[Session] = Field(
+        None, description="Session in which this decision was made"
+    )
+    supersedes: Optional["Decision"] = Field(
+        None, description="An earlier decision this one overrides"
+    )
+
+    metadata: dict = {"index_fields": ["name", "description"]}
+
+
+class TodoSession(Entity):
+    """A TS-N entry from TODO_SESSIONS.md.
+
+    A cross-cutting scope that requires its own dedicated session — too large
+    for inline handling, too cross-cutting for a single KI entry.
+
+    Field mapping (Entity → TodoSession concept):
+    - `name` (Entity-required) ← the TS-NNN identifier (e.g. 'TS-005')
+    - `description` (Entity-required) ← one-sentence description of the session's scope
+    """
+
+    name: str = Field(..., description="Primary key, format 'TS-NNN' (e.g. 'TS-005')")
+    description: str = Field(
+        ..., description="One-sentence description of the session's scope"
+    )
+    status: Optional[
+        Literal["Open", "Locked", "In-progress", "Resolved", "Promoted", "Deferred"]
+    ] = Field(None, description="Current status of the TODO session")
+    depends_on: List["TodoSession"] = Field(
+        default_factory=list, description="Other TS entries this one depends on"
+    )
+    blocks: List[Track] = Field(
+        default_factory=list, description="Tracks this TS entry blocks"
+    )
+
+    metadata: dict = {"index_fields": ["name", "description", "status"]}
+
+
+class KnownIssue(Entity):
+    """A KI-N entry from KNOWN_ISSUES.md.
+
+    Project-scoped, status-tracked defect or risk. Resolved KIs preserve
+    lineage to the commit + session that resolved them.
+
+    Field mapping (Entity → KnownIssue concept):
+    - `name` (Entity-required) ← the KI-NNN identifier (e.g. 'KI-020')
+    - `description` (Entity-required) ← short title of the issue
+    """
+
+    name: str = Field(..., description="Primary key, format 'KI-NNN' (e.g. 'KI-020')")
+    description: str = Field(..., description="Short title of the issue")
+    status: Optional[
+        Literal["Open", "Investigating", "Resolved", "Descoped", "Deferred"]
+    ] = Field(None, description="Current status of the issue")
+    severity: Optional[Literal["P0", "P1", "P2"]] = Field(
+        None, description="Severity if classified"
+    )
+    first_observed: Optional[date] = Field(
+        None, description="Date the issue was first observed"
+    )
+    resolved_at: Optional[date] = Field(None, description="Date the issue was resolved")
+    resolved_by: Optional[Commit] = Field(
+        None, description="Commit that resolved this issue"
+    )
+    resolved_in: Optional[Session] = Field(
+        None, description="Session in which this issue was resolved"
+    )
+    blocks: List[Track] = Field(
+        default_factory=list, description="Tracks this issue blocks"
+    )
+    related_lessons: List[Lesson] = Field(
+        default_factory=list,
+        description="Lessons codified as a result of this issue",
+    )
+
+    metadata: dict = {"index_fields": ["name", "description", "status"]}
+
+
+# ============================================================================
+# Multi-type wrapper — for mixed-content extraction
+# ----------------------------------------------------------------------------
+# Use this as the cognify root when the source doc contains multiple entity
+# types (e.g., session-close memos, KNOWN_ISSUES.md, TODO_SESSIONS.md).
+#
+# For single-type docs (e.g., a rule file = one Lesson, a commit message =
+# one Commit), pass the entity class directly as root for cleaner extraction.
+# ============================================================================
+
+
+class NuaContext(Entity):
+    """Wrapper that enables Cognee to extract multiple entity types per cognify call.
+
+    Each cognify pass produces one NuaContext per chunk with populated
+    collections — the extractor LLM is told to identify and classify entities
+    into the right bucket. The NuaContext node itself acts as a per-doc
+    grouping in Neo4j, connected to every sub-entity extracted from that doc.
+
+    Field mapping (Entity → NuaContext concept):
+    - `name` (Entity-required) ← identifier for this context unit, e.g. source doc name
+    - `description` (Entity-required) ← short description of what this context aggregates
+    """
+
+    name: str = Field(
+        ..., description="Identifier for this context unit, e.g. source doc name"
+    )
+    description: str = Field(
+        ...,
+        description="Short description of the source doc and what this NuaContext aggregates",
+    )
+    sessions: List[Session] = Field(default_factory=list)
+    known_issues: List[KnownIssue] = Field(default_factory=list)
+    todo_sessions: List[TodoSession] = Field(default_factory=list)
+    commits: List[Commit] = Field(default_factory=list)
+    decisions: List[Decision] = Field(default_factory=list)
+    lessons: List[Lesson] = Field(default_factory=list)
+    tracks: List[Track] = Field(default_factory=list)
+    artifacts: List[Artifact] = Field(default_factory=list)
+
+    metadata: dict = {"index_fields": ["name", "description"]}
+
+
+# Resolve forward references so self-referential types (Decision.supersedes,
+# TodoSession.depends_on) work after class definitions are complete.
+Decision.model_rebuild()
+TodoSession.model_rebuild()

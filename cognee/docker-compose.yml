@@ -1,0 +1,53 @@
+version: '3.8'
+
+# Cognee backing stores.
+# - Neo4j on standard bolt port 7687
+# - Postgres on port 5433 to avoid conflict with the host's default 5432 (which is often
+#   already in use by an app dev DB)
+#
+# CHANGE THE PASSWORDS before exposing this to anything beyond localhost.
+
+services:
+  cognee-neo4j:
+    image: neo4j:5.26
+    container_name: cognee-neo4j
+    ports:
+      - "7687:7687"      # bolt protocol (used by the cognee MCP server)
+      - "7474:7474"      # HTTP UI (optional; useful for cypher-shell queries)
+    environment:
+      NEO4J_AUTH: neo4j/pleaseletmein
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 2G
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "pleaseletmein", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  cognee-postgres:
+    image: pgvector/pgvector:pg17
+    container_name: cognee-postgres
+    ports:
+      - "127.0.0.1:5433:5432"   # bind explicitly to 127.0.0.1; not exposed beyond localhost
+    environment:
+      POSTGRES_USER: cognee
+      POSTGRES_PASSWORD: cognee_local_dev
+      POSTGRES_DB: cognee_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cognee -d cognee_db"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  neo4j-data:
+  neo4j-logs:
+  postgres-data:
